@@ -1,16 +1,10 @@
 # -*- coding: utf-8 -*-
-
-
-import json  
-
-
+import json
 from datetime import datetime
 from datetime import timedelta
 import bisect
 import itertools
 import sys
-import os
-
 
 
 if len(sys.argv) > 1:
@@ -21,6 +15,7 @@ if len(sys.argv) > 1:
         output_file = './tweet_output/output.txt'
 else:
     tweets_data_path = './tweet_input/tweets.txt'
+    output_file = './tweet_output/output.txt'
 
 def add_twt(time, hashtags):
 #to add a new tweet to the graph
@@ -34,11 +29,8 @@ def add_twt(time, hashtags):
         time_key = [t[0] for t in twt_window]
         twt_window.insert(bisect.bisect_right(time_key, time, lo=0, hi=len(time_key)),[time, ht_pairs])
     
-    #Add hashtag pairs into pair list as a tracker
-    #add_pairs(ht_pairs)    
     return
-    
-    
+   
     
 def gen_pairs(strs): 
 #Convert a list of str to a list of str pairs
@@ -76,16 +68,9 @@ def evict_twt(new_time, win):
     return win[bisect.bisect_right(time_key, new_time, lo=0, hi=len(time_key)):]
 
 
-
-
-#Assumptions 1 - I will not use current time to decide the boundry of the 60s windows,
-#so this program can process historic tweets.
-#I will use new tweet's creation time + 60s as the cut-off, if the time is most recent.
-
-#Initiate window and graph
+#Initiate window and average degree list
 twt_window = []
 r_avg_deg = None
-#tweets_data = []  
 
 #open tweet file
 tweets_file = open(tweets_data_path, "r")  
@@ -95,9 +80,9 @@ for line in tweets_file:
     except ValueError:
         continue
     
+    #Only new tweets with the creation time will be counted
     if 'created_at' in tweet:
-        
-        #Initiate rolling average degree list or add one average
+        #Initiate rolling average degree list or add one average same as previous one
         if r_avg_deg == None:
             r_avg_deg=[0]
         else:
@@ -106,9 +91,9 @@ for line in tweets_file:
         #Convert creation time to datetime type.
         new_twt_time = datetime.strptime(tweet['created_at'],'%a %b %d %H:%M:%S +0000 %Y')
         new_cutoff_time = new_twt_time - timedelta(seconds = 60)  
-        
-        #Ignore new tweets older than cut
-        if len(twt_window) == 0 or new_twt_time > twt_window[0][0]:
+                
+        #Ignore tweets older than cutoff
+        if len(twt_window) == 0 or new_twt_time > twt_window[-1][0] - timedelta(seconds = 60):
             #Evict expired tweets from the window
             if len(twt_window) > 0 and new_cutoff_time > twt_window[0][0]:            
                 twt_window = evict_twt(new_cutoff_time, twt_window)
@@ -121,11 +106,13 @@ for line in tweets_file:
                 if len(new_twt_ht) > 1:
                     add_twt(new_twt_time, new_twt_ht)
                     r_avg_deg[-1] = cal_avg_deg()
+
+        
+#Write the result to the output file. No output, if there is not tweet processed.                    
 if r_avg_deg != None and len(r_avg_deg) > 0:  
     with open(output_file, 'w') as f:
         for s in r_avg_deg:
             f.write('%.2f' % s + '\n')
+    print(str(len(r_avg_deg)) + ' tweets have been processed')
 else:
     print('No tweet has been processed')
-
-

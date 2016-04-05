@@ -3,7 +3,6 @@ import json
 from datetime import datetime
 from datetime import timedelta
 import bisect
-import itertools
 import sys
 
 
@@ -17,21 +16,7 @@ else:
     tweets_data_path = './tweet_input/tweets.txt'
     output_file = './tweet_output/output.txt'
 
-def add_twt(time, hashtags):
-#to add a new tweet to the graph
-    
-    #Genrate hashtag pairs
-    ht_pairs = gen_pairs(hashtags)
-    #Add tweet into window list as traker
-    if twt_window == []:
-        twt_window.append([time, ht_pairs])
-    else:
-        time_key = [t[0] for t in twt_window]
-        twt_window.insert(bisect.bisect_right(time_key, time, lo=0, hi=len(time_key)),[time, ht_pairs])
-    
-    return
-   
-    
+
 def gen_pairs(strs): 
 #Convert a list of str to a list of str pairs
     pairs = []
@@ -42,35 +27,90 @@ def gen_pairs(strs):
     return pairs
 
 
+def add_twt(time, hashtags):
+#to add a new tweet to the graph
+    
+    #Genrate hashtag pairs
+    ht_pairs = gen_pairs(hashtags)
+    #Add tweet into window list as traker
+    if twt_window == []:
+        twt_window.append([time, hashtags, ht_pairs])
+        dist_pairs.clear()
+        dist_hashtags.clear()
+            
+    else:
+        time_key = [t[0] for t in twt_window]
+        twt_window.insert(bisect.bisect_right(time_key, time, lo=0, hi=len(time_key)),[time, hashtags, ht_pairs])
+    
+    #Update pair dictionary and hashtag dictionary
+    for pair in ht_pairs:
+        dist_pairs.update({tuple(pair):dist_pairs.get(tuple(pair), 0) + 1})   
+    for ht in hashtags:
+        dist_hashtags.update({ht:dist_hashtags.get(ht, 0) + 1})    
+    
+    return
+
+
+def evict_twt(new_time):
+#Evict expired tweets
+    
+    time_key = [t[0] for t in twt_window]
+    idx = bisect.bisect_left(time_key, new_time, lo=0, hi=len(time_key))
+    if idx == 0:
+        return
+    
+    if idx == len(time_key):
+        #In this case all tweets are expired
+        dist_pairs.clear()
+        dist_hashtags.clear()
+        del twt_window[:]
+        return
+        
+    else:
+        #Remove Hashtags and pairs from dictionary
+        for t in twt_window[:idx]:
+            for ht in t[1]:
+                cnt_ht = dist_hashtags.get(ht, 0)
+                if cnt_ht < 1:
+                    print('Cannot evict: ')
+                    print(t)
+                    return
+                elif cnt_ht == 1:
+                    del dist_hashtags[ht]
+                else:
+                    dist_hashtags[ht] = cnt_ht - 1
+            
+            for p in t[2]:
+                cnt_p = dist_pairs.get(tuple(p), -1)
+                if cnt_p < 1:
+                    print('Cannot evict: ')
+                    print(t)
+                    return
+                elif cnt_p == 1:
+                    del dist_pairs[tuple(p)]
+                else:
+                    dist_pairs[tuple(p)] = cnt_p - 1 
+            
+        del twt_window[:idx]
+    return
+    
+    
 def cal_avg_deg():
 #Calculate the average degree
-    pairs = []
+    
     if len(twt_window) < 1: return 0
-    for twt in twt_window:
-        for p in twt[1]:
-            pairs.append(p)
-            
-    #Make a list of unique pairs
-    pairs.sort()    
-    uq_pairs = list(pairs for pairs,_ in itertools.groupby(pairs))
-    #Make a list of unique hashtags
-    nodes = [ y for x in uq_pairs for y in x]
-    nodes.sort()
-    uq_nodes = list(nodes for nodes,_ in itertools.groupby(nodes))
+  
     #Calculate average degree by two times of number of pairs(edges) divided by number of hashtags
-    return len(uq_pairs)*2/len(uq_nodes)
+    return len(dist_pairs)*2/len(dist_hashtags)
     
-
-def evict_twt(new_time, win):
-#Evict expired tweets
-    time_key = [t[0] for t in win]
-    
-    return win[bisect.bisect_right(time_key, new_time, lo=0, hi=len(time_key)):]
-
 
 #Initiate window and average degree list
 twt_window = []
 r_avg_deg = None
+dist_pairs = {}
+dist_hashtags = {}
+exp_twts = []
+
 
 #open tweet file
 tweets_file = open(tweets_data_path, "r")  
@@ -82,7 +122,7 @@ for line in tweets_file:
     
     #Only new tweets with the creation time will be counted
     if 'created_at' in tweet:
-        #Initiate rolling average degree list or add one average same as previous one
+        #Initiate rolling average degree list or add one average same as previous one that will be updated if adding or evicting happens
         if r_avg_deg == None:
             r_avg_deg=[0]
         else:
@@ -96,7 +136,7 @@ for line in tweets_file:
         if len(twt_window) == 0 or new_twt_time > twt_window[-1][0] - timedelta(seconds = 60):
             #Evict expired tweets from the window
             if len(twt_window) > 0 and new_cutoff_time > twt_window[0][0]:            
-                twt_window = evict_twt(new_cutoff_time, twt_window)
+                evict_twt(new_cutoff_time)
                 r_avg_deg[-1] = cal_avg_deg()
             #Check whether the tweet has more than 1 hashtags.
             if 'entities' in tweet and 'hashtags'in tweet['entities'] and len(tweet['entities']['hashtags'])>1:
@@ -106,13 +146,16 @@ for line in tweets_file:
                 if len(new_twt_ht) > 1:
                     add_twt(new_twt_time, new_twt_ht)
                     r_avg_deg[-1] = cal_avg_deg()
-
+    else:
+        exp_twts.append(tweet)
         
-#Write the result to the output file. No output, if there is not tweet processed.                    
+#Write the result to the output file. No output, if there is not tweet processed. 
+                
 if r_avg_deg != None and len(r_avg_deg) > 0:  
     with open(output_file, 'w') as f:
         for s in r_avg_deg:
             f.write('%.2f' % s + '\n')
     print(str(len(r_avg_deg)) + ' tweets have been processed')
+    
 else:
     print('No tweet has been processed')

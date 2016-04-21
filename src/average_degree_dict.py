@@ -1,3 +1,8 @@
+'''
+In this version, a dictionary is used to store the tweets in the 60s window. the running time is longer than one of previous version which uses list.
+The reason could be - each time evicting old tweets, this version has to iterate through the whole dictionary, while last version only slices the list for the old tweets.
+
+'''
 # -*- coding: utf-8 -*-
 import json
 from datetime import datetime
